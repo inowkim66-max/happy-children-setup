@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happy Children | 기기 설정</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #edf4ff;
+      color: #142749;
+      font: 16px/1.6 system-ui, "Malgun Gothic", sans-serif;
+    }
+    main { width: min(680px, calc(100% - 32px)); margin: 32px auto; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 46px;
+      height: 46px;
+      border-radius: 14px;
+      background: #2159d5;
+      color: white;
+      font-weight: 800;
+    }
+    header button { margin-left: auto; }
+    section, dialog {
+      background: white;
+      border: 1px solid #dce6f7;
+      border-radius: 22px;
+      padding: clamp(20px, 5vw, 36px);
+    }
+    h1 { margin: 0; font-size: clamp(24px, 6vw, 34px); line-height: 1.3; }
+    p { color: #4a5e7d; }
+    button, .download {
+      display: inline-block;
+      padding: 12px 16px;
+      border: 1px solid #c9d9f4;
+      border-radius: 12px;
+      background: #f4f8ff;
+      color: #17449e;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .primary { background: #2159d5; border-color: #2159d5; color: white; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    #status { min-height: 2em; margin-bottom: 0; }
+    dialog { width: min(480px, calc(100% - 32px)); color: inherit; }
+    dialog::backdrop { background: #14274988; }
+    label { display: block; margin-bottom: 16px; font-weight: 700; }
+    input {
+      display: block;
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid #c9d9f4;
+      border-radius: 10px;
+      font: inherit;
+    }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="logo" aria-hidden="true">HC</span>
+      <strong>Happy Children</strong>
+      <button id="open-admin" type="button">관리자</button>
+    </header>
+
+    <section aria-labelledby="title">
+      <h1 id="title">아이의 갤럭시 연결하기</h1>
+      <p>PC에서 Chrome 또는 Edge로 이 페이지를 열어 주세요. 갤럭시에서 USB 디버깅을 켜고 데이터 전송이 가능한 USB 케이블로 연결하세요.</p>
+      <div class="actions">
+        <button id="connect" class="primary" type="button">USB 기기 선택</button>
+        <a id="download" class="download"
+           href="https://sxwfodmfqiykxhoqyrkv.supabase.co/storage/v1/object/public/happy-children-apk/Happy%20Children%20v1.0.apk">
+          APK 다운로드
+        </a>
+      </div>
+      <p id="status" role="status"></p>
+    </section>
+  </main>
+
+  <dialog id="admin" aria-labelledby="admin-title">
+    <h2 id="admin-title">관리자 설정</h2>
+    <p>APK 주소 변경은 이 브라우저에만 저장됩니다.</p>
+    <form id="unlock">
+      <label>설정 PIN
+        <input id="pin" type="password" inputmode="numeric" required>
+      </label>
+      <button class="primary" type="submit">열기</button>
+    </form>
+    <form id="settings" hidden>
+      <label>Supabase 공개 APK 주소
+        <input id="apk-url" type="url" required>
+      </label>
+      <button class="primary" type="submit">저장</button>
+    </form>
+    <p id="admin-status" role="status"></p>
+    <form method="dialog"><button>닫기</button></form>
+  </dialog>
+
+  <script>
+    const download = document.querySelector("#download");
+    const status = document.querySelector("#status");
+    const admin = document.querySelector("#admin");
+    const unlock = document.querySelector("#unlock");
+    const settings = document.querySelector("#settings");
+    const pin = document.querySelector("#pin");
+    const apkUrl = document.querySelector("#apk-url");
+    const adminStatus = document.querySelector("#admin-status");
+    const storageKey = "happy-children.public-apk";
+    const supabaseOrigin = new URL(download.href).origin;
+
+    function publicApkUrl(value) {
+      const url = new URL(value);
+      if (url.origin !== supabaseOrigin ||
+          !url.pathname.startsWith("/storage/v1/object/public/") ||
+          !url.pathname.toLowerCase().endsWith(".apk")) {
+        throw new Error("이 Supabase 프로젝트의 공개 APK 주소를 입력해 주세요.");
+      }
+      return url.href;
+    }
+
+    try {
+      const savedUrl = localStorage.getItem(storageKey);
+      if (savedUrl) download.href = publicApkUrl(savedUrl);
+    } catch {
+      // 기본 APK 주소를 사용합니다.
+    }
+
+    document.querySelector("#connect").addEventListener("click", async () => {
+      if (!navigator.usb) {
+        status.textContent = "HTTPS로 열린 PC용 Chrome 또는 Edge에서 다시 시도해 주세요.";
+        return;
+      }
+      try {
+        const device = await navigator.usb.requestDevice({
+          filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
+        });
+        status.textContent = (device.productName || "USB 기기") +
+          " 선택 완료. 이 단계에서는 USB 기기 선택까지만 확인됩니다.";
+      } catch (error) {
+        status.textContent = error.name === "NotFoundError"
+          ? "기기가 선택되지 않았습니다. 목록이 비어 있으면 케이블과 USB 디버깅 설정을 확인해 주세요."
+          : "USB 기기 선택창을 열 수 없습니다. 브라우저의 USB 권한을 확인해 주세요.";
+      }
+    });
+
+    document.querySelector("#open-admin").addEventListener("click", () => {
+      pin.value = "";
+      unlock.hidden = false;
+      settings.hidden = true;
+      adminStatus.textContent = "";
+      admin.showModal();
+    });
+
+    unlock.addEventListener("submit", event => {
+      event.preventDefault();
+      if (pin.value !== "0000") {
+        adminStatus.textContent = "PIN을 다시 확인해 주세요.";
+        return;
+      }
+      unlock.hidden = true;
+      settings.hidden = false;
+      apkUrl.value = download.href;
+      adminStatus.textContent = "";
+      apkUrl.focus();
+    });
+
+    settings.addEventListener("submit", event => {
+      event.preventDefault();
+      try {
+        const url = publicApkUrl(apkUrl.value.trim());
+        localStorage.setItem(storageKey, url);
+        download.href = url;
+        adminStatus.textContent = "이 브라우저에 저장했습니다.";
+      } catch (error) {
+        adminStatus.textContent = error.name === "Error"
+          ? error.message
+          : "주소 형식이나 브라우저 저장 권한을 확인해 주세요.";
+      }
+    });
+  </script>
+</body>
+</html>
