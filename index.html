@@ -188,3 +188,128 @@
   </script>
 </body>
 </html>
+
+<script type="module">
+  const connect = document.querySelector("#connect");
+  const status = document.querySelector("#status");
+  const packageName = "com.aistudio.happychildren.hckids";
+  const receiver = packageName + "/com.example.permissions.HappyChildrenDeviceAdminReceiver";
+
+  const register = document.createElement("button");
+  register.type = "button";
+  register.className = "primary";
+  register.textContent = "이탈 방지 설정";
+  register.hidden = true;
+  connect.after(register);
+  connect.textContent = "갤럭시 연결 및 상태 확인";
+
+  let adb;
+  let usbConnection;
+  let busy = false;
+
+  async function shell(command) {
+    const service = adb.subprocess.shellProtocol;
+    if (!service) throw new Error("이 기기에서 ADB 셸을 사용할 수 없습니다.");
+    return service.spawnWaitText(command);
+  }
+
+  async function checkStatus() {
+    register.hidden = true;
+    const result = await shell("dpm list-owners");
+    if (result.exitCode !== 0) {
+      throw new Error("등록 상태를 읽을 수 없습니다. " + result.stderr.trim());
+    }
+
+    const owners = result.stdout.trim();
+    const owner = owners.split(/\r?\n/).find(line => /\bDevice\s*Owner\b/i.test(line));
+
+    if (owner && owner.includes("admin=" + packageName + "/")) {
+      status.textContent = "Happy Children 기기 관리자 이미 등록됨. 앱에서 자녀 모드 상태를 확인해 주세요.";
+      return;
+    }
+    if (owner || !/^(no owners|0 owners?)\.?$/i.test(owners)) {
+      status.textContent = "기존 관리자가 있거나 등록 상태를 판별할 수 없습니다.";
+      return;
+    }
+
+    const installed = await shell("pm path " + packageName);
+    if (installed.exitCode !== 0 || !/^package:/m.test(installed.stdout)) {
+      status.textContent = "Happy Children 앱을 찾을 수 없습니다. 갤럭시에 설치된 앱을 확인해 주세요.";
+      return;
+    }
+
+    status.textContent = "앱 설치 확인. 이탈 방지 설정을 진행할 수 있습니다.";
+    register.hidden = false;
+  }
+
+  connect.addEventListener("click", async event => {
+    event.stopImmediatePropagation();
+    if (busy) return;
+    busy = true;
+    connect.disabled = true;
+    register.hidden = true;
+    status.textContent = "ADB 연결 기능을 불러오는 중입니다.";
+    try {
+      const [{ Adb, AdbDaemonTransport }, { AdbDaemonWebUsbDeviceManager }, credentials] =
+        await Promise.all([
+          import("https://esm.sh/@yume-chan/adb@2.0.0"),
+          import("https://esm.sh/@yume-chan/adb-daemon-webusb@2.0.0"),
+          import("https://esm.sh/@yume-chan/adb-credential-web@2.0.0")
+        ]);
+      const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!manager) throw new Error("PC의 Chrome 또는 Edge에서 이 페이지를 열어 주세요.");
+
+      const permitted = await manager.getDevices();
+      const device = permitted.length === 1 ? permitted[0] : await manager.requestDevice();
+      if (!device) {
+        status.textContent = "갤럭시를 선택해 주세요.";
+        return;
+      }
+
+      if (adb) await adb.close();
+      adb = undefined;
+      status.textContent = "갤럭시에 USB 디버깅 허용 창이 뜨면 ‘허용’을 눌러 주세요.";
+      usbConnection = await device.connect();
+      adb = new Adb(await AdbDaemonTransport.authenticate({
+        serial: device.serial,
+        connection: usbConnection,
+        credentialStore: new credentials.default()
+      }));
+      await checkStatus();
+    } catch (error) {
+      status.textContent = "연결 또는 상태 확인 실패. " + error.message;
+      if (!adb && usbConnection) {
+        try { await usbConnection.readable.cancel(); } catch {}
+      }
+    } finally {
+      connect.disabled = false;
+      busy = false;
+    }
+  }, true);
+
+  register.addEventListener("click", async () => {
+    if (busy || !adb) return;
+    if (!window.confirm("연결된 갤럭시를 Happy Children의 기기 관리 대상으로 등록할까요?")) return;
+    busy = true;
+    connect.disabled = true;
+    register.disabled = true;
+    try {
+      await checkStatus();
+      if (register.hidden) return;
+      status.textContent = "기기 관리자 등록 중입니다.";
+      const result = await shell("dpm set-device-owner " + receiver);
+      await checkStatus();
+      if (!register.hidden) {
+        status.textContent = "등록이 완료되지 않았습니다. " +
+          (result.stderr.trim() || result.stdout.trim() || "안드로이드 등록 조건을 확인해 주세요.");
+      }
+    } catch (error) {
+      register.hidden = true;
+      status.textContent = "등록 결과를 확인할 수 없습니다. " + error.message;
+    } finally {
+      connect.disabled = false;
+      register.disabled = false;
+      busy = false;
+    }
+  });
+</script>
